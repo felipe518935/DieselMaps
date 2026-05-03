@@ -1,163 +1,326 @@
-import { GoogleMap, Marker, InfoWindow, useJsApiLoader, DirectionsService, DirectionsRenderer } from '@react-google-maps/api';
-import { useState, useCallback } from 'react';
-import PriceTag from './PriceTag';
+﻿import { useEffect, useMemo, useState } from 'react';
+import {
+  GoogleMap,
+  InfoWindow,
+  Marker,
+  DirectionsRenderer,
+  DirectionsService,
+  useJsApiLoader,
+} from '@react-google-maps/api';
 
-const mapContainerStyle = { width: '100%', height: '500px' };
+const containerStyle = {
+  width: '100%',
+  minHeight: '620px',
+  borderRadius: '24px',
+  overflow: 'hidden',
+};
 
-const defaultCenter = { lat: 4.711, lng: -74.0721 };
+const defaultCenter = {
+  lat: 4.711,
+  lng: -74.0721,
+};
 
-export default function MapView({ stations = [], onStationClick, userLocation, selectedStation }) {
-  const [directions, setDirections] = useState(null);
-  const [routeError, setRouteError] = useState(null);
+const mapOptions = {
+  disableDefaultUI: true,
+  zoomControl: true,
+  streetViewControl: false,
+  mapTypeControl: false,
+  fullscreenControl: false,
+  gestureHandling: 'greedy',
+  scrollwheel: true,
+  draggable: true,
+};
 
+export default function MapView({
+  stations,
+  activeStation,
+  userLocation,
+  favoriteIds = [],
+  onSelectStation,
+  onToggleFavorite,
+  onMapClick,
+  routeTarget,
+  routeTargets,
+}) {
   const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_KEY,
-    libraries: ['places'],
   });
 
-  const handleMarkerClick = useCallback((station) => {
-    onStationClick?.(station);
-  }, [onStationClick]);
+  const [mapInstance, setMapInstance] = useState(null);
+  const [directionsResponses, setDirectionsResponses] = useState([]);
+  const [zoomedStationId, setZoomedStationId] = useState(null);
+  const [hasCenteredOnOrigin, setHasCenteredOnOrigin] = useState(false);
 
-  const handleDirectionsCallback = useCallback((response) => {
-    if (response !== null) {
-      if (response.status === 'OK') {
-        setDirections(response);
-        setRouteError(null);
-      } else {
-        console.error('Error al calcular la ruta:', response);
-        setRouteError(response.status);
-      }
+  const origin = useMemo(() => {
+    if (!userLocation) return null;
+    return {
+      lat: Number(userLocation.latitude),
+      lng: Number(userLocation.longitude),
+    };
+  }, [userLocation]);
+
+  const selectedRouteTargets = useMemo(() => {
+    if (routeTargets && routeTargets.length > 0) return routeTargets.filter((station) => station?.latitude && station?.longitude);
+    if (routeTarget && routeTarget.latitude && routeTarget.longitude) return [routeTarget];
+    return [];
+  }, [routeTarget, routeTargets]);
+
+  const routeSegments = useMemo(() => {
+    if (!origin || selectedRouteTargets.length === 0) return [];
+
+    const segments = [];
+    const validStations = selectedRouteTargets;
+
+    // from user origin to first station
+    segments.push({
+      origin,
+      destination: {
+        lat: Number(validStations[0].latitude),
+        lng: Number(validStations[0].longitude),
+      },
+    });
+
+    // successive station-to-station segments
+    for (let i = 1; i < validStations.length; i += 1) {
+      segments.push({
+        origin: {
+          lat: Number(validStations[i - 1].latitude),
+          lng: Number(validStations[i - 1].longitude),
+        },
+        destination: {
+          lat: Number(validStations[i].latitude),
+          lng: Number(validStations[i].longitude),
+        },
+      });
     }
-  }, []);
 
-  if (loadError) return <div className="text-center p-8 text-red-600">Error al cargar el mapa</div>;
-  if (!isLoaded) return <div className="text-center p-8 text-gray-800">Cargando mapa...</div>;
+    return segments;
+  }, [origin, selectedRouteTargets]);
 
-  const mapCenter = userLocation
-    ? { lat: userLocation.latitude, lng: userLocation.longitude }
-    : defaultCenter;
+  useEffect(() => {
+    setDirectionsResponses(Array(routeSegments.length).fill(null));
+  }, [routeSegments.length]);
 
-  const directionsRequest = userLocation && selectedStation ? {
-    origin: { lat: userLocation.latitude, lng: userLocation.longitude },
-    destination: {
-      lat: parseFloat(selectedStation.latitude),
-      lng: parseFloat(selectedStation.longitude),
-    },
-    travelMode: 'DRIVING',
-  } : null;
+  const handleDirectionsCallback = (result, index) => {
+    if (result && result.status === 'OK') {
+      setDirectionsResponses((current) => {
+        const next = [...current];
+        next[index] = result;
+        return next;
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!mapInstance || !origin || hasCenteredOnOrigin) return;
+    mapInstance.panTo(origin);
+    mapInstance.setZoom(13);
+    setHasCenteredOnOrigin(true);
+  }, [mapInstance, origin, hasCenteredOnOrigin]);
+
+  useEffect(() => {
+    if (!mapInstance || !activeStation || zoomedStationId === activeStation.id) return;
+    const stationPosition = {
+      lat: Number(activeStation.latitude),
+      lng: Number(activeStation.longitude),
+    };
+    mapInstance.panTo(stationPosition);
+    mapInstance.setZoom(15);
+    setZoomedStationId(activeStation.id);
+  }, [activeStation, mapInstance, zoomedStationId]);
+
+  const reverseGeocode = async (lat, lng) => {
+    if (!window.google?.maps?.Geocoder) return '';
+    return new Promise((resolve) => {
+      const geocoder = new window.google.maps.Geocoder();
+      geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+        if (status === 'OK' && results?.[0]?.formatted_address) {
+          resolve(results[0].formatted_address);
+        } else {
+          resolve('');
+        }
+      });
+    });
+  };
+
+  const handleMapClick = async (event) => {
+    if (!onMapClick || !event.latLng) return;
+    const latitude = event.latLng.lat();
+    const longitude = event.latLng.lng();
+    const address = await reverseGeocode(latitude, longitude);
+    onMapClick({ latitude, longitude, address });
+  };
+
+  const handleCenterOnUser = () => {
+    if (!mapInstance || !origin) return;
+    mapInstance.panTo(origin);
+    mapInstance.setZoom(13);
+    setHasCenteredOnOrigin(true);
+  };
+
+  const initialCenter = useMemo(() => origin || defaultCenter, [origin]);
+
+  if (loadError) {
+    return (
+      <div className="loading-panel">
+        <p>No se pudo cargar Google Maps.</p>
+      </div>
+    );
+  }
+
+  if (!isLoaded) {
+    return (
+      <div className="loading-panel">
+        <p>Cargando mapa...</p>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ position: 'relative' }}>
-      <GoogleMap
-        mapContainerStyle={mapContainerStyle}
-        center={mapCenter}
-        zoom={13}
-        options={{
-          disableDefaultUI: false,
-          zoomControl: true,
-          streetViewControl: false,
+    <div className="map-panel" style={{ minHeight: '100%', position: 'relative' }}>
+      <button
+        type="button"
+        onClick={handleCenterOnUser}
+        className="button button-secondary"
+        style={{
+          position: 'absolute',
+          zIndex: 10,
+          top: '16px',
+          right: '16px',
+          padding: '10px 14px',
+          background: '#0f172a',
+          border: '1px solid #334155',
+          color: '#e2e8f0',
+          boxShadow: '0 10px 20px rgba(15, 23, 42, 0.25)',
         }}
       >
-        {userLocation && (
+        Centrar ubicación
+      </button>
+      <GoogleMap
+        mapContainerStyle={containerStyle}
+        defaultCenter={initialCenter}
+        defaultZoom={13}
+        options={mapOptions}
+        onLoad={(map) => setMapInstance(map)}
+        onClick={handleMapClick}
+      >
+        {origin && (
           <Marker
-            position={mapCenter}
-            title="Tu ubicación"
+            position={origin}
+            label={{ text: 'Tú', color: '#ffffff', fontWeight: '700' }}
             icon={{
-              path: 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z',
-              fillColor: '#2563eb',
-              fillOpacity: 0.9,
+              path: window.google.maps.SymbolPath.CIRCLE,
+              scale: 7,
+              fillColor: '#10b981',
+              fillOpacity: 1,
               strokeColor: '#ffffff',
               strokeWeight: 2,
-              scale: 1.8,
             }}
           />
         )}
 
-        {stations.map((station) => (
-          <Marker
-            key={station.id}
-            position={{
-              lat: parseFloat(station.latitude),
-              lng: parseFloat(station.longitude),
+        {stations?.map((station) => {
+          const position = {
+            lat: Number(station.latitude),
+            lng: Number(station.longitude),
+          };
+          return (
+            <Marker
+              key={station.id}
+              position={position}
+              onClick={() => onSelectStation?.(station)}
+              icon={
+                activeStation?.id === station.id
+                  ? {
+                      path: window.google.maps.SymbolPath.CIRCLE,
+                      scale: 10,
+                      fillColor: '#0ea5e9',
+                      fillOpacity: 1,
+                      strokeColor: '#fff',
+                      strokeWeight: 2,
+                    }
+                  : undefined
+              }
+            />
+          );
+        })}
+
+        {routeSegments.map((segment, index) => (
+          <DirectionsService
+            key={`directions-service-${index}`}
+            options={{
+              origin: segment.origin,
+              destination: segment.destination,
+              travelMode: 'DRIVING',
             }}
-            title={station.name}
-            icon={{
-              path: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z',
-              fillColor: station.available ? '#10b981' : '#ef4444',
-              fillOpacity: 1,
-              strokeColor: '#fff',
-              strokeWeight: 2,
-              scale: 2,
-            }}
-            onClick={() => handleMarkerClick(station)}
+            callback={(result) => handleDirectionsCallback(result, index)}
           />
         ))}
 
-        {directionsRequest && !directions && (
-          <DirectionsService
-            options={directionsRequest}
-            callback={handleDirectionsCallback}
-          />
+        {directionsResponses.map(
+          (response, index) =>
+            response && (
+              <DirectionsRenderer
+                key={`directions-renderer-${index}`}
+                options={{
+                  directions: response,
+                  suppressMarkers: true,
+                  preserveViewport: true,
+                  polylineOptions: {
+                    strokeColor: '#22c55e',
+                    strokeOpacity: 0.9,
+                    strokeWeight: 5,
+                    icons: [
+                      {
+                        icon: {
+                          path: 'M 0,-1 0,1',
+                          strokeOpacity: 1,
+                          scale: 4,
+                        },
+                        offset: '0',
+                        repeat: '12px',
+                      },
+                    ],
+                  },
+                }}
+              />
+            ),
         )}
 
-        {directions && (
-          <DirectionsRenderer
-            options={{
-              directions,
-              suppressMarkers: true,
-              polylineOptions: {
-                strokeColor: '#2563eb',
-                strokeWeight: 6,
-              },
-            }}
-          />
-        )}
-
-        {selectedStation && (
+        {activeStation && (
           <InfoWindow
             position={{
-              lat: parseFloat(selectedStation.latitude),
-              lng: parseFloat(selectedStation.longitude),
+              lat: Number(activeStation.latitude),
+              lng: Number(activeStation.longitude),
             }}
-            onCloseClick={() => onStationClick?.(null)}
+            onCloseClick={() => onSelectStation?.(null)}
           >
-            <div className="p-3 min-w-[200px]">
-              <h3 className="font-bold text-sm text-gray-900">{selectedStation.name}</h3>
-              <p className="text-xs text-gray-700 mb-2">{selectedStation.brand}</p>
-              <div className="space-y-1">
-                {selectedStation.prices?.length > 0 ? (
-                  selectedStation.prices.map((p) => (
-                    <div key={p.fuelType} className="text-xs">
-                      <PriceTag fuelType={p.fuelType} price={p.priceCop} />
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-xs text-slate-600">Sin precios registrados</p>
-                )}
+            <div style={{ maxWidth: '270px', color: '#111' }}>
+              <h3 style={{ margin: '0 0 8px', fontSize: '1rem', color: '#111' }}>{activeStation.name}</h3>
+              <p style={{ margin: '0 0 8px', color: '#111', fontSize: '0.9rem' }}>{activeStation.address}</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                {(activeStation.prices || []).slice(0, 3).map((price) => (
+                  <span key={price.fuelType} className="price-pill" style={{ color: '#111', background: '#e2e8f0' }}>
+                    {price.fuelType}: ${price.priceCop.toLocaleString('es-CO')}
+                  </span>
+                ))}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                <button type="button" className="button-secondary" onClick={() => onSelectStation?.(activeStation)}>
+                  Ver en lista
+                </button>
+                <button
+                  type="button"
+                  className="button-primary"
+                  onClick={() => onToggleFavorite?.(activeStation.id)}
+                >
+                  {favoriteIds.includes(activeStation.id) ? 'Quitar favorito' : 'Favorito'}
+                </button>
               </div>
             </div>
           </InfoWindow>
         )}
       </GoogleMap>
-      {routeError && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 16,
-            left: 16,
-            background: 'rgba(255,255,255,0.95)',
-            padding: '10px 14px',
-            borderRadius: 12,
-            boxShadow: '0 6px 18px rgba(0,0,0,0.1)',
-            color: '#b91c1c',
-            fontSize: '0.85rem',
-            zIndex: 10,
-          }}
-        >
-          Error calculando la ruta: {routeError}
-        </div>
-      )}
     </div>
   );
 }

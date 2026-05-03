@@ -4,9 +4,15 @@ import com.dieselmaps.dto.*;
 import com.dieselmaps.entity.FuelPrice;
 import com.dieselmaps.entity.Station;
 import com.dieselmaps.entity.User;
+import com.dieselmaps.entity.PriceHistory;
+import com.dieselmaps.entity.UserFavorite;
+import com.dieselmaps.entity.Alert;
 import com.dieselmaps.repository.FuelPriceRepository;
 import com.dieselmaps.repository.StationRepository;
 import com.dieselmaps.repository.UserRepository;
+import com.dieselmaps.repository.PriceHistoryRepository;
+import com.dieselmaps.repository.UserFavoriteRepository;
+import com.dieselmaps.repository.AlertRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +29,9 @@ public class StationService {
     private final StationRepository stationRepository;
     private final UserRepository userRepository;
     private final FuelPriceRepository fuelPriceRepository;
+    private final PriceHistoryRepository priceHistoryRepository;
+    private final UserFavoriteRepository userFavoriteRepository;
+    private final AlertRepository alertRepository;
 
     @Transactional(readOnly = true)
     public List<StationDTO> findNearby(double lat, double lng, double radiusKm) {
@@ -92,6 +101,30 @@ public class StationService {
         fuelPrice.setRecordedAt(LocalDateTime.now());
 
         fuelPriceRepository.save(fuelPrice);
+        
+        // 1. Guardar historial
+        PriceHistory history = PriceHistory.builder()
+                .station(station)
+                .fuelType(fuelType)
+                .priceCop(req.getPriceCop())
+                .recordedAt(LocalDateTime.now())
+                .build();
+        priceHistoryRepository.save(history);
+
+        // 2. Generar alertas para favoritos
+        List<UserFavorite> favorites = userFavoriteRepository.findByStationId(stationId);
+        String alertMessage = "La estación " + station.getName() + " actualizó el precio de " + fuelType.name() + " a $" + req.getPriceCop();
+        
+        List<Alert> alerts = favorites.stream()
+                .map(fav -> Alert.builder()
+                        .user(fav.getUser())
+                        .message(alertMessage)
+                        .isRead(false)
+                        .createdAt(LocalDateTime.now())
+                        .build())
+                .collect(Collectors.toList());
+        alertRepository.saveAll(alerts);
+
         station.setUpdatedAt(LocalDateTime.now());
         stationRepository.save(station);
 
@@ -103,6 +136,18 @@ public class StationService {
         Station station = stationRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Estación no encontrada"));
         return convertToDTO(station);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PriceHistoryDTO> getPriceHistory(Long stationId) {
+        return priceHistoryRepository.findByStationIdOrderByRecordedAtAsc(stationId).stream()
+                .map(ph -> PriceHistoryDTO.builder()
+                        .id(ph.getId())
+                        .fuelType(ph.getFuelType().name())
+                        .priceCop(ph.getPriceCop())
+                        .recordedAt(ph.getRecordedAt())
+                        .build())
+                .collect(Collectors.toList());
     }
 
     private StationDTO convertToDTO(Station station) {

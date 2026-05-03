@@ -1,191 +1,120 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
-import { authAPI } from '../api/auth';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { authAPI } from '../api/auth.js';
+import { useAuth } from '../context/AuthContext.jsx';
+import Navbar from '../components/Navbar.jsx';
 
 export default function Register() {
-  const [form, setForm] = useState({
-    username: '',
-    email: '',
-    password: '',
-    phone: '',
-    birthDate: '',
-    role: 'USER',
-  });
-  const [errors, setErrors] = useState({});
-  const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
   const navigate = useNavigate();
+  const { user, login } = useAuth();
+  const [form, setForm] = useState({ username: '', email: '', password: '', phone: '', birthDate: '', role: 'USER' });
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setForm({ ...form, [name]: value });
-    if (errors[name]) {
-      setErrors({ ...errors, [name]: '' });
+  useEffect(() => {
+    if (user) {
+      navigate('/map');
     }
-  };
+  }, [user, navigate]);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setError('');
     setLoading(true);
-    setErrors({});
     try {
       const { data } = await authAPI.register(form);
       login({ username: data.username, role: data.role }, data.token);
-      navigate('/map');
     } catch (err) {
-      if (err.response?.data) {
-        setErrors(err.response.data);
-      } else {
-        setErrors({ submit: 'Error al registrarse' });
-      }
+      const payload = err.response?.data;
+      setError(payload?.message || payload?.error || 'No se pudo registrar.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg)', padding: '3rem 1rem' }}>
-      <div className="panel w-full max-w-md">
-        <h1 className="text-3xl font-bold text-center mb-2">⛽ Diesel Maps</h1>
-        <p className="text-center text-slate-700 text-sm mb-6">
-          Crea tu cuenta para comenzar
-        </p>
-
-        {errors.submit && (
-          <div className="panel-alert">
-            {errors.submit}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-900 mb-2">
-              Selecciona tu Rol *
-            </label>
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <label htmlFor="role-user" className="flex items-center p-3 border-2 rounded-lg cursor-pointer transition" style={{borderColor: form.role === 'USER' ? 'var(--secondary)' : 'rgba(15, 23, 43, 0.16)', background: form.role === 'USER' ? 'rgba(59, 130, 246, 0.08)' : 'transparent'}}>
-                <input
-                  id="role-user"
-                  type="radio"
-                  name="role"
-                  value="USER"
-                  checked={form.role === 'USER'}
-                  onChange={handleChange}
-                  className="mr-2 accent-secondary"
-                />
-                <span className="text-sm font-medium text-slate-950">👤 Usuario</span>
-              </label>
-              <label htmlFor="role-operator" className="flex items-center p-3 border-2 rounded-lg cursor-pointer transition" style={{borderColor: form.role === 'OPERATOR' ? 'var(--accent)' : 'rgba(15, 23, 43, 0.16)', background: form.role === 'OPERATOR' ? 'rgba(245, 158, 11, 0.08)' : 'transparent'}}>
-                <input
-                  id="role-operator"
-                  type="radio"
-                  name="role"
-                  value="OPERATOR"
-                  checked={form.role === 'OPERATOR'}
-                  onChange={handleChange}
-                  className="mr-2 accent-accent"
-                />
-                <span className="text-sm font-medium text-slate-950">🛠️ Operador</span>
-              </label>
+    <div className="page-shell">
+      <Navbar />
+      <main className="site-frame" style={{ paddingTop: '24px' }}>
+        <div className="card" style={{ padding: '32px', maxWidth: '560px', margin: '0 auto' }}>
+          <div className="section-header">
+            <div>
+              <h2>Comienza tu experiencia</h2>
+              <p style={{ color: '#94a3b8' }}>Registra tu cuenta como usuario o como operador.</p>
             </div>
-            {errors.role && <p className="text-red-500 text-xs mt-1">{errors.role}</p>}
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-950 mb-2">
-              Nombre de Usuario
-            </label>
-            <input
-              type="text"
-              name="username"
-              placeholder="juan_doe"
-              value={form.username}
-              onChange={handleChange}
-              className="input-modern"
-              required
-            />
-            {errors.username && <p className="text-red-500 text-xs mt-1">{errors.username}</p>}
-          </div>
+          {error && <div className="alert">{error}</div>}
 
-          <div>
-            <label className="block text-sm font-medium text-slate-950 mb-2">
-              Correo Electrónico
-            </label>
-            <input
-              type="email"
-              name="email"
-              placeholder="tu@email.com"
-              value={form.email}
-              onChange={handleChange}
-              className="input-modern"
-              required
-            />
-            {errors.email && <p className="text-red-500 text-xs mt-1">{errors.email}</p>}
-          </div>
+          <form onSubmit={handleSubmit} style={{ marginTop: '24px' }}>
+            <div className="form-field">
+              <label>Rol</label>
+              <select className="select" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}>
+                <option value="USER">Usuario</option>
+                <option value="OPERATOR">Operador</option>
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Usuario</label>
+              <input
+                className="input"
+                value={form.username}
+                onChange={(event) => setForm({ ...form, username: event.target.value })}
+                required
+              />
+            </div>
+            <div className="form-field">
+              <label>Correo</label>
+              <input
+                type="email"
+                className="input"
+                value={form.email}
+                onChange={(event) => setForm({ ...form, email: event.target.value })}
+                required
+              />
+            </div>
+            <div className="form-field">
+              <label>Contraseña</label>
+              <input
+                type="password"
+                className="input"
+                value={form.password}
+                onChange={(event) => setForm({ ...form, password: event.target.value })}
+                required
+              />
+            </div>
+            <div className="form-field">
+              <label>Teléfono</label>
+              <input
+                type="tel"
+                className="input"
+                value={form.phone}
+                onChange={(event) => setForm({ ...form, phone: event.target.value })}
+              />
+            </div>
+            <div className="form-field">
+              <label>Fecha de nacimiento</label>
+              <input
+                type="date"
+                className="input"
+                value={form.birthDate}
+                onChange={(event) => setForm({ ...form, birthDate: event.target.value })}
+                required
+              />
+            </div>
+            <button type="submit" className="button button-primary" disabled={loading}>
+              {loading ? 'Registrando...' : 'Crear cuenta'}
+            </button>
+          </form>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-950 mb-2">
-              Contraseña (Min 8 caracteres, incluir mayúscula)
-            </label>
-            <input
-              type="password"
-              name="password"
-              placeholder="••••••••"
-              value={form.password}
-              onChange={handleChange}
-              className="input-modern"
-              required
-            />
-            {errors.password && <p className="text-red-500 text-xs mt-1">{errors.password}</p>}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-950 mb-2">
-              Teléfono
-            </label>
-            <input
-              type="tel"
-              name="phone"
-              placeholder="+57 301 234 5678"
-              value={form.phone}
-              onChange={handleChange}
-              className="input-modern"
-            />
-            {errors.phone && <p className="text-red-500 text-xs mt-1">{errors.phone}</p>}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-950 mb-2">
-              Fecha de Nacimiento
-            </label>
-            <input
-              type="date"
-              name="birthDate"
-              value={form.birthDate}
-              onChange={handleChange}
-              className="input-modern"
-              required
-            />
-            {errors.birthDate && <p className="text-red-500 text-xs mt-1">{errors.birthDate}</p>}
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn-primary w-full"
-          >
-            {loading ? 'Registrando...' : 'Crear Cuenta'}
-          </button>
-        </form>
-
-        <p className="text-center text-sm" style={{ color: 'var(--text-light)', marginTop: '1.5rem' }}>
-          ¿Ya tienes cuenta?{' '}
-          <Link to="/login" className="font-medium" style={{ color: 'var(--secondary)' }}>
-            Inicia sesión aquí
-          </Link>
-        </p>
-      </div>
+          <p style={{ marginTop: '22px', color: '#94a3b8' }}>
+            ¿Ya tienes cuenta?{' '}
+            <button type="button" className="button-secondary" style={{ padding: '10px 16px' }} onClick={() => navigate('/login')}>
+              Ingresar
+            </button>
+          </p>
+        </div>
+      </main>
     </div>
   );
 }

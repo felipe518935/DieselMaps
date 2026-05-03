@@ -1,175 +1,284 @@
-import { useState, useEffect } from 'react';
-import { useGeolocation } from '../hooks/useGeolocation';
-import { stationsAPI } from '../api/auth';
-import MapView from '../components/MapView';
-import StationCard from '../components/StationCard';
-import Navbar from '../components/Navbar';
-import { useAuth } from '../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
+﻿import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../context/AuthContext.jsx';
+import Navbar from '../components/Navbar.jsx';
+import MapView from '../components/MapView.jsx';
+import { stationsAPI, usersAPI } from '../api/auth.js';
+import { useGeolocation } from '../hooks/useGeolocation.js';
+
+const defaultLocation = { latitude: 4.711, longitude: -74.0721 };
+
+const getDistanceKm = (lat1, lng1, lat2, lng2) => {
+  const toRad = (value) => (value * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
 
 export default function Map() {
-  const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
-  const { location, loading: geoLoading } = useGeolocation();
+  const { user } = useAuth();
+  const { location, loading: geoLoading, error: geoError } = useGeolocation();
   const [stations, setStations] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [selectedStation, setSelectedStation] = useState(null);
-  const [radiusKm, setRadiusKm] = useState(5);
+  const [activeStation, setActiveStation] = useState(null);
+  const [selectedFuel, setSelectedFuel] = useState('');
+  const [efficiency, setEfficiency] = useState(10);
+  const [error, setError] = useState('');
+  const [favoriteIds, setFavoriteIds] = useState([]);
+  const [favoriteMessage, setFavoriteMessage] = useState('');
+
+  const userLocation = location || defaultLocation;
+  const nearestStation = stations[0] || null;
 
   useEffect(() => {
-    if (authLoading) return;
+    async function loadFavorites() {
+      if (!user) {
+        setFavoriteIds([]);
+        return;
+      }
+      try {
+        const { data } = await usersAPI.getFavorites();
+        setFavoriteIds(data.map((station) => station.id));
+      } catch (err) {
+        console.warn('No se pudo cargar favoritos', err);
+      }
+    }
+    loadFavorites();
+  }, [user]);
+
+  useEffect(() => {
+    async function fetchStations() {
+      try {
+        const { data } = await stationsAPI.getNearby(userLocation.latitude, userLocation.longitude, 15);
+        const sortedStations = (data || []).slice().sort((a, b) => {
+          const distA = getDistanceKm(userLocation.latitude, userLocation.longitude, Number(a.latitude), Number(a.longitude));
+          const distB = getDistanceKm(userLocation.latitude, userLocation.longitude, Number(b.latitude), Number(b.longitude));
+          return distA - distB;
+        });
+        setStations(sortedStations);
+        if (!selectedFuel && sortedStations[0]?.prices?.length) {
+          setSelectedFuel(sortedStations[0].prices[0].fuelType);
+        }
+      } catch (err) {
+        setError('No se pudieron cargar las estaciones.');
+      }
+    }
+
+    if (!geoLoading) {
+      fetchStations();
+    }
+  }, [userLocation, geoLoading, selectedFuel]);
+
+  const toggleFavorite = async (stationId) => {
     if (!user) {
-      navigate('/login');
+      setFavoriteMessage('Debes iniciar sesión para agregar favoritos.');
       return;
     }
-  }, [user, authLoading, navigate]);
 
-  useEffect(() => {
-    if (!location || geoLoading) return;
+    try {
+      await usersAPI.toggleFavorite(stationId);
+      setFavoriteIds((current) =>
+        current.includes(stationId) ? current.filter((id) => id !== stationId) : [...current, stationId],
+      );
+      setFavoriteMessage('Favorito actualizado correctamente.');
+      setTimeout(() => setFavoriteMessage(''), 2500);
+    } catch (err) {
+      setFavoriteMessage('No se pudo actualizar favorito.');
+    }
+  };
 
-    const fetchStations = async () => {
-      setLoading(true);
-      try {
-        const { data } = await stationsAPI.getNearby(
-          location.latitude,
-          location.longitude,
-          radiusKm
-        );
-        setStations(data);
-      } catch (error) {
-        console.error('Error cargando estaciones:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+  const handleStationSelect = (station) => {
+    setActiveStation(station);
+    if (!selectedFuel && station.prices?.length) {
+      setSelectedFuel(station.prices[0].fuelType);
+    }
+  };
 
-    fetchStations();
-  }, [location, radiusKm, geoLoading]);
-
-  if (authLoading || geoLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{background: 'var(--bg)'}}>
-        <div className="text-center bounce-in">
-          <div className="spinner mx-auto mb-4"></div>
-          <p style={{color: 'var(--text-light)'}} className="font-medium">Cargando Diesel Maps...</p>
-        </div>
-      </div>
-    );
-  }
+  const selectedDistance = activeStation
+    ? getDistanceKm(userLocation.latitude, userLocation.longitude, Number(activeStation.latitude), Number(activeStation.longitude))
+    : 0;
+  const fuelNeeded = activeStation && efficiency > 0 ? selectedDistance / efficiency : 0;
+  const selectedPriceObj = activeStation?.prices?.find((price) => price.fuelType === selectedFuel);
+  const estimatedCost = selectedPriceObj ? fuelNeeded * selectedPriceObj.priceCop : null;
 
   return (
-    <div className="min-h-screen" style={{background: 'var(--bg)'}}>
+    <div className="page-shell">
       <Navbar />
-
-      <div className="max-w-7xl mx-auto p-4 lg:p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
-          {/* Mapa */}
-          <div className="lg:col-span-2">
-            <div className="card map-container mb-6 fade-in">
-              <MapView
-                stations={stations}
-                onStationClick={setSelectedStation}
-                userLocation={location}
-                selectedStation={selectedStation}
-              />
-            </div>
-
-            {/* Controls */}
-            <div className="card p-6 fade-in" style={{animationDelay: '0.1s'}}>
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <div className="flex-1">
-                  <label className="block text-sm font-semibold mb-3 flex items-center gap-2" style={{color: 'var(--text)'}}>
-                    <span style={{color: 'var(--secondary)'}}>🔍</span> Radio de búsqueda:
-                    <span className="font-bold" style={{color: 'var(--primary)'}}>{radiusKm} km</span>
-                  </label>
-                  <input
-                    type="range"
-                    min="1"
-                    max="20"
-                    value={radiusKm}
-                    onChange={(e) => setRadiusKm(Number(e.target.value))}
-                    className="w-full sm:w-48 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer slider"
-                  />
-                </div>
-                <div className="text-left sm:text-right">
-                  <p className="text-sm text-slate-800 font-medium flex items-center gap-1">
-                    <span style={{color: 'var(--secondary)'}}>📍</span> {stations.length} estaciones encontradas
-                  </p>
-                  {loading && (
-                    <p className="text-xs animate-pulse mt-1" style={{color: 'var(--primary)'}}>
-                      🔄 Actualizando...
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Panel Lateral */}
-          <div className="space-y-6">
-            {selectedStation ? (
-              <div className="card p-6 fade-in" style={{animationDelay: '0.2s'}}>
-                <h2 className="text-xl font-bold mb-4 flex items-center justify-between" style={{color: 'var(--text)'}}>
-                  <span className="flex items-center gap-2">
-                    <span style={{color: 'var(--secondary)'}}>📋</span> Detalles de la Estación
-                  </span>
-                  <button
-                    onClick={() => setSelectedStation(null)}
-                    className="text-slate-600 hover:text-red-500 transition-colors p-2 hover:bg-red-50 rounded-full hover:scale-110 transform duration-200"
-                  >
-                    ✕
-                  </button>
-                </h2>
-                <StationCard station={selectedStation} />
-              </div>
-            ) : (
-              <div className="card p-6 fade-in" style={{animationDelay: '0.2s', borderLeft: `4px solid var(--primary)`}}>
-                <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
-                  <span style={{color: 'var(--accent)'}}>💡</span> <span>Consejo Útil</span>
-                </h3>
-                <p className="text-sm leading-relaxed" style={{color: 'var(--text-light)'}}>
-                  Haz clic en un marcador del mapa para ver los detalles completos de la estación de servicio y comparar precios.
-                </p>
-              </div>
-            )}
-
-            {/* Lista de estaciones */}
-            <div className="card p-6 fade-in" style={{animationDelay: '0.3s'}}>
-              <h3 className="font-bold text-xl mb-6 flex items-center gap-2" style={{color: 'var(--text)'}}>
-                <span style={{color: 'var(--secondary)'}}>🗺️</span> Estaciones Cercanas
-              </h3>
-              <div className="space-y-3 max-h-96 overflow-y-auto scrollbar-thin scrollbar-thumb-blue-300 scrollbar-track-slate-100">
-                {stations.length > 0 ? (
-                  stations.map((station, index) => (
-                    <div
-                      key={station.id}
-                      onClick={() => setSelectedStation(station)}
-                      className="station-item"
-                      style={{animationDelay: `${0.4 + index * 0.05}s`}}
-                    >
-                      <p className="font-semibold text-sm mb-1" style={{color: 'var(--text)'}}>{station.name}</p>
-                      <p className="text-xs flex items-center gap-1 mb-2" style={{color: 'var(--text-light)'}}>
-                        <span style={{color: 'var(--secondary)'}}>🏷️</span> {station.brand}
-                      </p>
-                      <div className="flex items-center gap-1">
-                        <span className={station.available ? 'status-available' : 'status-closed'}>
-                          {station.available ? '✅ Disponible' : '❌ Cerrada'}
-                        </span>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-8">
-                    <div className="text-4xl mb-3">🚫</div>
-                    <p className="text-sm text-slate-700 mb-2 font-medium">No hay estaciones cercanas</p>
-                    <p className="text-xs text-slate-600">Intenta aumentar el radio de búsqueda</p>
-                  </div>
-                )}
-              </div>
-            </div>
+      <main className="site-frame" style={{ padding: '0 0 40px' }}>
+        <div className="section-header" style={{ gap: '12px' }}>
+          <div>
+            <h2>Mapa de estaciones</h2>
+            <p style={{ color: '#94a3b8' }}>
+              {geoError
+                ? 'Ubicación no disponible. Mostrando estaciones aproximadas.'
+                : 'Selecciona una estación y calcula tu recorrido, consumo y costo de combustible.'}
+            </p>
           </div>
         </div>
-      </div>
+
+        {favoriteMessage && <div className="success-alert" style={{ marginBottom: '18px' }}>{favoriteMessage}</div>}
+        {error && <div className="alert" style={{ marginBottom: '18px' }}>{error}</div>}
+
+        <div className="grid-2" style={{ gap: '24px', minHeight: 'calc(100vh - 160px)' }}>
+          <section className="panel" style={{ padding: '24px', minHeight: '100%' }}>
+            <div className="section-header">
+              <div>
+                <h3>Estaciones cercanas</h3>
+                <p style={{ color: '#94a3b8' }}>Explora todas las estaciones y elige cuál quieres visitar.</p>
+              </div>
+            </div>
+
+            {nearestStation ? (
+              <div className="map-info-card" style={{ marginBottom: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start' }}>
+                  <div>
+                    <h4 style={{ margin: 0 }}>Estación más cercana</h4>
+                    <p style={{ margin: '8px 0 0', color: '#94a3b8' }}>{nearestStation.name}</p>
+                    <p style={{ margin: '12px 0 0', color: '#cbd5e1' }}>{nearestStation.address}</p>
+                  </div>
+                  <div style={{ display: 'grid', gap: '6px', textAlign: 'right' }}>
+                    <span className={`status-pill ${nearestStation.available ? 'status-active' : 'status-closed'}`}>
+                      {nearestStation.available ? 'Abierta' : 'Cerrada'}
+                    </span>
+                    <span className="price-pill">{getDistanceKm(userLocation.latitude, userLocation.longitude, Number(nearestStation.latitude), Number(nearestStation.longitude)).toFixed(1)} km</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="card" style={{ padding: '24px' }}>No se encontraron estaciones cercanas.</div>
+            )}
+
+            <div className="section-header" style={{ marginTop: '18px' }}>
+              <div>
+                <h3>Ruta seleccionada</h3>
+                <p style={{ color: '#94a3b8' }}>Selecciona una estación para mostrar la línea y el costo.</p>
+              </div>
+            </div>
+
+            {activeStation ? (
+              <div className="map-info-card" style={{ marginBottom: '24px' }}>
+                <h4 style={{ marginBottom: '12px' }}>{activeStation.name}</h4>
+                <p style={{ margin: '0 0 16px', color: '#94a3b8' }}>{activeStation.address}</p>
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#cbd5e1' }}>
+                    <span>Distancia estimada</span>
+                    <strong>{selectedDistance.toFixed(1)} km</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#cbd5e1' }}>
+                    <span>Consumo por km</span>
+                    <strong>{efficiency} km/L</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#cbd5e1' }}>
+                    <span>Litros necesarios</span>
+                    <strong>{fuelNeeded ? fuelNeeded.toFixed(2) : '0.00'} L</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#cbd5e1' }}>
+                    <span>Costo estimado</span>
+                    <strong>{estimatedCost ? `$${estimatedCost.toLocaleString('es-CO')}` : 'N/A'}</strong>
+                  </div>
+                  <div style={{ display: 'grid', gap: '12px' }}>
+                    <label style={{ color: '#94a3b8' }}>Tipo de combustible</label>
+                    <select
+                      value={selectedFuel}
+                      onChange={(event) => setSelectedFuel(event.target.value)}
+                      className="input"
+                      style={{ background: '#0f172a', color: '#e2e8f0', borderColor: '#334155' }}
+                    >
+                      {activeStation.prices?.map((price) => (
+                        <option key={price.fuelType} value={price.fuelType}>
+                          {price.fuelType} - ${price.priceCop.toLocaleString('es-CO')}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ display: 'grid', gap: '12px' }}>
+                    <label style={{ color: '#94a3b8' }}>Eficiencia de tu vehículo (km/L)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={efficiency}
+                      onChange={(event) => setEfficiency(Number(event.target.value))}
+                      className="input"
+                      style={{ background: '#0f172a', color: '#e2e8f0', borderColor: '#334155' }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="card" style={{ padding: '24px' }}>Selecciona una estación para calcular tu viaje.</div>
+            )}
+
+            <div className="section-header" style={{ marginTop: '18px' }}>
+              <div>
+                <h3>Lista de estaciones</h3>
+                <p style={{ color: '#94a3b8' }}>Haz clic en cualquier estación para activarla en el mapa.</p>
+              </div>
+            </div>
+
+            <div className="grid-2" style={{ gap: '18px' }}>
+              {stations.map((station) => {
+                const distanceKm = getDistanceKm(userLocation.latitude, userLocation.longitude, Number(station.latitude), Number(station.longitude));
+                const isFavorite = favoriteIds.includes(station.id);
+                return (
+                  <div
+                    key={station.id}
+                    className={`card card-hover ${activeStation?.id === station.id ? 'card-selected' : ''}`}
+                    onClick={() => handleStationSelect(station)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1 }}>
+                        <h4 style={{ margin: 0 }}>{station.name}</h4>
+                        <p style={{ margin: '8px 0 0', color: '#94a3b8' }}>{station.brand || 'Marca no registrada'}</p>
+                        <p style={{ margin: '10px 0 0', color: '#cbd5e1', fontSize: '0.95rem' }}>{station.address}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFavorite(station.id);
+                        }}
+                        className="button-secondary"
+                        style={{ whiteSpace: 'nowrap', height: '40px', alignSelf: 'flex-start' }}
+                      >
+                        {isFavorite ? 'Quitar favorito' : 'Favorito'}
+                      </button>
+                    </div>
+                    <div style={{ marginTop: '16px', display: 'grid', gap: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', color: '#94a3b8' }}>
+                        <span>{distanceKm.toFixed(1)} km</span>
+                        <span>{station.available ? 'Abierta' : 'Cerrada'}</span>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                        {station.prices?.slice(0, 3).map((price) => (
+                          <span key={price.fuelType} className="price-pill">
+                            {price.fuelType} ${price.priceCop.toLocaleString('es-CO')}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="panel" style={{ padding: '0', minHeight: '100%' }}>
+            <MapView
+              stations={stations}
+              activeStation={activeStation}
+              userLocation={userLocation}
+              favoriteIds={favoriteIds}
+              onSelectStation={handleStationSelect}
+              onToggleFavorite={toggleFavorite}
+              routeTarget={activeStation}
+            />
+          </section>
+        </div>
+      </main>
     </div>
   );
 }

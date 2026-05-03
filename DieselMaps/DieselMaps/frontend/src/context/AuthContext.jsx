@@ -1,41 +1,44 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    const savedToken = localStorage.getItem('dieselmaps_token');
-    const savedUser = localStorage.getItem('dieselmaps_user');
-    if (savedToken && savedUser) {
-      setToken(savedToken);
-      setUser(JSON.parse(savedUser));
+    const token = localStorage.getItem('dieselmaps_token');
+    const rawUser = localStorage.getItem('dieselmaps_user');
+    if (token && rawUser) {
+      try {
+        setUser(JSON.parse(rawUser));
+      } catch {
+        localStorage.removeItem('dieselmaps_user');
+      }
     }
     setLoading(false);
   }, []);
 
-  const login = (userData, jwtToken) => {
-    setUser(userData);
-    setToken(jwtToken);
-    localStorage.setItem('dieselmaps_token', jwtToken);
-    localStorage.setItem('dieselmaps_user', JSON.stringify(userData));
+  const login = ({ username, role }, token) => {
+    const nextUser = { username, role };
+    setUser(nextUser);
+    localStorage.setItem('dieselmaps_token', token);
+    localStorage.setItem('dieselmaps_user', JSON.stringify(nextUser));
+    navigate('/map');
   };
 
   const logout = () => {
-    setUser(null);
-    setToken(null);
     localStorage.removeItem('dieselmaps_token');
     localStorage.removeItem('dieselmaps_user');
+    setUser(null);
+    navigate('/login');
   };
 
-  return (
-    <AuthContext.Provider value={{ user, token, login, logout, loading }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  const value = useMemo(() => ({ user, loading, login, logout }), [user, loading]);
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export const useAuth = () => {

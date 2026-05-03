@@ -1,203 +1,198 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { stationsAPI, authAPI } from '../api/auth';
-import { useAuth } from '../context/AuthContext';
-import PriceTag from '../components/PriceTag';
-import Navbar from '../components/Navbar';
+﻿import { useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import Navbar from '../components/Navbar.jsx';
+import PriceTag from '../components/PriceTag.jsx';
+import PriceHistoryChart from '../components/PriceHistoryChart.jsx';
+import { stationsAPI } from '../api/auth.js';
+import { useAuth } from '../context/AuthContext.jsx';
+
+const allowedFuelTypes = ['DIESEL', 'CORRIENTE', 'EXTRA', 'GAS'];
 
 export default function StationDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const { user } = useAuth();
   const [station, setStation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [updatingPrice, setUpdatingPrice] = useState(false);
-  const [priceForm, setPriceForm] = useState({ fuelType: 'DIESEL', priceCop: '' });
+  const [priceError, setPriceError] = useState('');
+  const [priceSuccess, setPriceSuccess] = useState('');
+  const [selectedFuel, setSelectedFuel] = useState('DIESEL');
+  const [newPrice, setNewPrice] = useState('');
+  const [savingPrice, setSavingPrice] = useState(false);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
 
   useEffect(() => {
-    const fetchStation = async () => {
+    async function loadStation() {
       try {
         const { data } = await stationsAPI.getById(id);
         setStation(data);
       } catch (err) {
-        setError('Error al cargar la estación');
+        setError('No se pudo cargar la estación.');
       } finally {
         setLoading(false);
       }
-    };
-
-    fetchStation();
+    }
+    loadStation();
   }, [id]);
 
-  const handlePriceUpdate = async (e) => {
-    e.preventDefault();
-    setUpdatingPrice(true);
+  useEffect(() => {
+    if (station?.prices?.length > 0) {
+      setSelectedFuel(station.prices[0].fuelType);
+      setNewPrice(station.prices[0].priceCop ?? '');
+    }
+  }, [station]);
+
+  const handlePriceUpdate = async (event) => {
+    event.preventDefault();
+    setPriceError('');
+    setPriceSuccess('');
+
+    if (!selectedFuel) {
+      setPriceError('Selecciona un tipo de combustible.');
+      return;
+    }
+    if (!newPrice || Number(newPrice) <= 0) {
+      setPriceError('Ingresa un precio válido.');
+      return;
+    }
+
+    setSavingPrice(true);
     try {
-      await stationsAPI.updatePrice(id, {
-        fuelType: priceForm.fuelType,
-        priceCop: parseFloat(priceForm.priceCop),
-      });
-      // Recargar estación
-      const { data } = await stationsAPI.getById(id);
-      setStation(data);
-      setPriceForm({ fuelType: 'DIESEL', priceCop: '' });
-      alert('Precio actualizado correctamente');
+      const payload = {
+        fuelType: selectedFuel,
+        priceCop: Number(newPrice),
+      };
+      const { data } = await stationsAPI.updatePrice(id, payload);
+      setStation((current) => ({
+        ...current,
+        prices: current.prices?.map((price) =>
+          price.fuelType === data.fuelType ? { ...price, priceCop: data.priceCop } : price,
+        ) ?? [{ fuelType: data.fuelType, priceCop: data.priceCop }],
+      }));
+      setPriceSuccess(`Precio de ${selectedFuel} actualizado a ${Number(newPrice).toLocaleString('es-CO')}.`);
+      setHistoryRefresh((prev) => prev + 1);
     } catch (err) {
-      alert('Error al actualizar el precio');
+      setPriceError(err.response?.data?.message || 'No se pudo actualizar el precio.');
     } finally {
-      setUpdatingPrice(false);
+      setSavingPrice(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-100">
-        <Navbar />
-        <div className="flex items-center justify-center p-8">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        </div>
-      </div>
-    );
-  }
-
-  if (error || !station) {
-    return (
-      <div className="min-h-screen bg-gray-100">
-        <Navbar />
-        <div className="max-w-2xl mx-auto p-8">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
-            {error || 'Estación no encontrada'}
-          </div>
-          <button
-            onClick={() => navigate('/map')}
-            className="mt-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-          >
-            ← Volver al Mapa
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const canUpdatePrice =
-    user && (user.role === 'OPERATOR' || user.role === 'ADMIN') &&
-    (user.username === station.operatorUsername || user.role === 'ADMIN');
-
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="page-shell">
       <Navbar />
-
-      <div className="max-w-2xl mx-auto p-4">
-        <button
-          onClick={() => navigate('/map')}
-          className="text-blue-600 hover:text-blue-800 text-sm font-medium mb-4"
-        >
-          ← Volver al Mapa
-        </button>
-
-        <div className="bg-white rounded-lg shadow-lg p-6">
-          {/* Header */}
-          <div className="mb-6">
-            <h1 className="text-3xl font-bold text-gray-900">{station.name}</h1>
-            <p className="text-gray-800 mt-2">{station.brand}</p>
-
-            <div className="flex gap-4 mt-4">
-              <span
-                className={`px-4 py-2 rounded-lg font-medium text-sm ${
-                  station.available
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-red-100 text-red-700'
-                }`}
-              >
-                {station.available ? '✓ Disponible' : '✗ Cerrada'}
-              </span>
-              <span className="px-4 py-2 rounded-lg bg-gray-100 text-gray-900 text-sm font-medium">
-                Operador: {station.operatorUsername}
-              </span>
-            </div>
+      <main className="site-frame">
+        <div className="section-header">
+          <div>
+            <h2>Detalle de estación</h2>
+            <p style={{ color: '#94a3b8' }}>Consulta información completa y el historial de precios.</p>
           </div>
-
-          {/* Address */}
-          <div className="mb-6 pb-6 border-b">
-            <p className="text-gray-900">
-              <span className="font-semibold">Dirección:</span> {station.address}
-            </p>
-            <p className="text-gray-900 mt-2">
-              <span className="font-semibold">Coordenadas:</span> {station.latitude}, {station.longitude}
-            </p>
-          </div>
-
-          {/* Prices */}
-          <div className="mb-6">
-            <h2 className="text-xl font-bold mb-4">Precios Actuales</h2>
-            <div className="grid grid-cols-2 gap-4">
-              {station.prices?.map((price) => (
-                <div key={price.fuelType} className="bg-gray-50 p-4 rounded-lg">
-                  <PriceTag fuelType={price.fuelType} price={price.priceCop} />
-                  {price.prevPriceCop && (
-                    <p className="text-xs text-gray-700 mt-2">
-                      Anterior: ${price.prevPriceCop.toLocaleString('es-CO')} COP
-                    </p>
-                  )}
-                  {price.recordedAt && (
-                    <p className="text-xs text-gray-700">
-                      Actualizado: {new Date(price.recordedAt).toLocaleString('es-CO')}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Update Price Form - Only for Operator */}
-          {canUpdatePrice && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-              <h3 className="text-lg font-bold text-blue-900 mb-4">Actualizar Precio</h3>
-              <form onSubmit={handlePriceUpdate} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 mb-2">
-                    Tipo de Combustible
-                  </label>
-                  <select
-                    value={priceForm.fuelType}
-                    onChange={(e) => setPriceForm({ ...priceForm, fuelType: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="CORRIENTE">CORRIENTE</option>
-                    <option value="EXTRA">EXTRA</option>
-                    <option value="DIESEL">DIESEL</option>
-                    <option value="GAS">GAS</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 mb-2">
-                    Precio (COP)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={priceForm.priceCop}
-                    onChange={(e) => setPriceForm({ ...priceForm, priceCop: e.target.value })}
-                    placeholder="10500.50"
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={updatingPrice}
-                  className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                >
-                  {updatingPrice ? 'Actualizando...' : 'Actualizar Precio'}
-                </button>
-              </form>
-            </div>
-          )}
+          <Link to="/map" className="button button-secondary">
+            Volver al mapa
+          </Link>
         </div>
-      </div>
+
+        {loading ? (
+          <div className="card" style={{ padding: '28px' }}>Cargando estación...</div>
+        ) : error ? (
+          <div className="alert">{error}</div>
+        ) : station ? (
+          <div className="grid-2" style={{ gap: '24px' }}>
+            <section className="panel" style={{ padding: '28px' }}>
+              <div className="section-header">
+                <div>
+                  <h3>{station.name}</h3>
+                  <p style={{ color: '#94a3b8' }}>{station.brand || 'Marca no disponible'}</p>
+                </div>
+                <span className={`status-pill ${station.available ? 'status-active' : 'status-closed'}`}>
+                  {station.available ? 'Operativa' : 'Cerrada'}
+                </span>
+              </div>
+              <div style={{ display: 'grid', gap: '12px' }}>
+                <div>
+                  <strong>Dirección</strong>
+                  <p style={{ margin: '6px 0 0', color: '#cbd5e1' }}>{station.address || 'Sin dirección registrada'}</p>
+                </div>
+                <div>
+                  <strong>Coordenadas</strong>
+                  <p style={{ margin: '6px 0 0', color: '#cbd5e1' }}>
+                    {Number(station.latitude).toFixed(6)}, {Number(station.longitude).toFixed(6)}
+                  </p>
+                </div>
+                <div>
+                  <strong>Última actualización</strong>
+                  <p style={{ margin: '6px 0 0', color: '#cbd5e1' }}>
+                    {station.updatedAt ? new Date(station.updatedAt).toLocaleString('es-CO') : 'N/A'}
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ marginTop: '24px' }}>
+                <h4 style={{ margin: 0, marginBottom: '14px' }}>Precios activos</h4>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+                  {station.prices?.length ? (
+                    station.prices.map((price) => (
+                      <PriceTag key={price.fuelType} fuelType={price.fuelType} price={price.priceCop} />
+                    ))
+                  ) : (
+                    <p style={{ color: '#94a3b8' }}>No hay precios registrados.</p>
+                  )}
+                </div>
+              </div>
+
+              {user?.role === 'OPERATOR' && (
+                <div style={{ marginTop: '26px', padding: '22px', borderRadius: '18px', background: '#0f172a', color: '#e2e8f0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+                    <h4 style={{ margin: 0 }}>Actualizar precio</h4>
+                    <span className="status-pill status-active">Operador</span>
+                  </div>
+                  {priceError && <div className="alert" style={{ marginBottom: '14px' }}>{priceError}</div>}
+                  {priceSuccess && <div className="success-alert" style={{ marginBottom: '14px' }}>{priceSuccess}</div>}
+                  <form onSubmit={handlePriceUpdate} style={{ display: 'grid', gap: '16px' }}>
+                    <div style={{ display: 'grid', gap: '10px' }}>
+                      <label style={{ color: '#94a3b8' }}>Combustible</label>
+                      <select
+                        value={selectedFuel}
+                        onChange={(event) => setSelectedFuel(event.target.value)}
+                        className="input"
+                        style={{ background: '#0f172a', color: '#e2e8f0', borderColor: '#334155' }}
+                      >
+                        {allowedFuelTypes.map((fuelType) => (
+                          <option key={fuelType} value={fuelType}>{fuelType}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ display: 'grid', gap: '10px' }}>
+                      <label style={{ color: '#94a3b8' }}>Nuevo precio COP</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={newPrice}
+                        onChange={(event) => setNewPrice(event.target.value)}
+                        className="input"
+                        style={{ background: '#0f172a', color: '#e2e8f0', borderColor: '#334155' }}
+                      />
+                    </div>
+                    <button type="submit" className="button button-primary" disabled={savingPrice}>
+                      {savingPrice ? 'Guardando...' : 'Guardar precio'}
+                    </button>
+                  </form>
+                </div>
+              )}
+            </section>
+
+            <section className="panel" style={{ padding: '28px' }}>
+              <div className="section-header">
+                <h3>Historial de precios</h3>
+              </div>
+              <PriceHistoryChart stationId={station.id} refreshKey={historyRefresh} />
+            </section>
+          </div>
+        ) : (
+          <div className="alert">Estación no encontrada.</div>
+        )}
+      </main>
     </div>
   );
 }

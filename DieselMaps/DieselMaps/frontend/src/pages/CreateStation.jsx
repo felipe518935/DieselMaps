@@ -1,264 +1,186 @@
-import { useState, useCallback } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { stationsAPI } from '../api/auth';
-import { useAuth } from '../context/AuthContext';
-import Navbar from '../components/Navbar';
-import GoogleMapPicker from '../components/GoogleMapPicker';
+import Navbar from '../components/Navbar.jsx';
+import MapView from '../components/MapView.jsx';
+import { stationsAPI } from '../api/auth.js';
+import { useGeolocation } from '../hooks/useGeolocation.js';
+
+const defaultPrices = [
+  { fuelType: 'DIESEL', label: 'Diésel' },
+  { fuelType: 'CORRIENTE', label: 'Corriente' },
+  { fuelType: 'EXTRA', label: 'Extra' },
+];
 
 export default function CreateStation() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [form, setForm] = useState({
-    name: '',
-    brand: '',
-    latitude: 4.7110,
-    longitude: -74.0721,
-    address: '',
-    prices: {
-      CORRIENTE: '',
-      EXTRA: '',
-      DIESEL: '',
-    },
-  });
-  const [errors, setErrors] = useState({});
+  const { location, loading: geoLoading, error: geoError } = useGeolocation();
+  const [form, setForm] = useState({ name: '', brand: '', address: '', latitude: '', longitude: '' });
+  const [prices, setPrices] = useState({ DIESEL: '', CORRIENTE: '', EXTRA: '' });
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleLocationSelect = useCallback((location) => {
-    setForm((prevForm) => ({
-      ...prevForm,
-      latitude: location.lat,
-      longitude: location.lng,
-    }));
-  }, []);
+  const userLocation = location || { latitude: 4.711, longitude: -74.0721 };
+  const previewStation = form.latitude && form.longitude ? [{
+    id: 'preview',
+    name: form.name || 'Nueva estación',
+    address: form.address || 'Ubicación seleccionada',
+    latitude: form.latitude,
+    longitude: form.longitude,
+    available: true,
+    prices: Object.entries(prices)
+      .filter(([, value]) => value !== '')
+      .map(([fuelType, value]) => ({ fuelType, priceCop: Number(value) })),
+  }] : [];
 
-  if (!user || (user.role !== 'OPERATOR' && user.role !== 'ADMIN')) {
-    return (
-      <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
-        <Navbar />
-        <div className="max-w-2xl mx-auto p-8">
-          <div className="panel-alert">
-            No tienes permiso para crear estaciones
-          </div>
-          <button
-            onClick={() => navigate('/map')}
-            className="btn-secondary mt-4"
-          >
-            ← Volver al Mapa
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setForm({ ...form, [name]: value });
-    if (errors[name]) {
-      setErrors({ ...errors, [name]: '' });
+  useEffect(() => {
+    if (!geoLoading && geoError && !form.latitude && !form.longitude) {
+      setForm((current) => ({ ...current, latitude: String(userLocation.latitude), longitude: String(userLocation.longitude) }));
     }
-  };
+  }, [geoLoading, geoError, userLocation.latitude, userLocation.longitude]);
 
-  const handlePriceChange = (fuelType, value) => {
-    setForm({
-      ...form,
-      prices: {
-        ...form.prices,
-        [fuelType]: value,
-      },
-    });
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setError('');
+    setSuccess('');
     setLoading(true);
-    setErrors({});
+
+    const payload = {
+      name: form.name,
+      brand: form.brand,
+      address: form.address,
+      latitude: Number(form.latitude),
+      longitude: Number(form.longitude),
+      prices: Object.entries(prices)
+        .filter(([, value]) => value !== '')
+        .map(([fuelType, value]) => ({ fuelType, priceCop: Number(value) })),
+    };
 
     try {
-      const prices = Object.entries(form.prices)
-        .filter(([_, value]) => value !== '' && value !== null)
-        .map(([fuelType, value]) => ({
-          fuelType,
-          priceCop: parseFloat(value),
-        }));
-
-      if (prices.length === 0) {
-        setErrors({ submit: 'Registra al menos un precio de combustible' });
-        setLoading(false);
-        return;
-      }
-
-      const stationData = {
-        name: form.name,
-        brand: form.brand,
-        latitude: parseFloat(form.latitude),
-        longitude: parseFloat(form.longitude),
-        address: form.address,
-        prices,
-      };
-
-      await stationsAPI.create(stationData);
-      alert('Estación creada exitosamente');
-      navigate('/map');
+      await stationsAPI.create(payload);
+      setSuccess('Estación creada correctamente.');
+      setTimeout(() => navigate('/map'), 800);
     } catch (err) {
-      if (err.response?.data) {
-        setErrors(err.response.data);
-      } else {
-        setErrors({ submit: 'Error al crear la estación' });
-      }
+      setError(err.response?.data?.message || err.response?.data?.error || 'Error al registrar la estación.');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleMapClick = ({ latitude, longitude, address }) => {
+    setForm((current) => ({
+      ...current,
+      latitude: String(latitude),
+      longitude: String(longitude),
+      address: address || current.address,
+    }));
+  };
+
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
+    <div className="page-shell">
       <Navbar />
+      <main className="site-frame" style={{ paddingTop: '24px' }}>
+        <div className="section-header">
+          <div>
+            <h2>Registrar nueva estación</h2>
+            <p style={{ color: '#94a3b8' }}>Registra coordenadas, nombre de estación y precios de combustible. Haz clic en el mapa para ajustar la ubicación.</p>
+          </div>
+        </div>
 
-      <div className="max-w-2xl mx-auto p-4">
-        <button
-          onClick={() => navigate('/map')}
-          className="text-secondary hover:text-primary text-sm font-medium mb-4"
-        >
-          ← Volver al Mapa
-        </button>
+        <div className="grid-2" style={{ gap: '24px', alignItems: 'start' }}>
+          <div className="card" style={{ padding: '32px' }}>
+            {error && <div className="alert">{error}</div>}
+            {success && <div className="success-alert">{success}</div>}
 
-        <div className="panel">
-          <h1 className="text-3xl font-bold text-slate-950 mb-2">Crear Nueva Estación</h1>
-          <p className="text-slate-700 mb-6">
-            Completa los datos para registrar una nueva estación de combustible
-          </p>
-
-          {errors.submit && (
-            <div className="panel-alert">
-              {errors.submit}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-900 mb-2">
-                Nombre de la Estación *
-              </label>
-              <input
-                type="text"
-                name="name"
-                value={form.name}
-                onChange={handleChange}
-                placeholder="Ej: Estación Central"
-                className="input-modern"
-                required
-              />
-              {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-900 mb-2">
-                Marca (Ej: Terpel, Biomax, Primax)
-              </label>
-              <input
-                type="text"
-                name="brand"
-                value={form.brand}
-                onChange={handleChange}
-                placeholder="Marca de la estación"
-                className="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
-              />
-              {errors.brand && <p className="text-red-500 text-xs mt-1">{errors.brand}</p>}
-            </div>
-
-            <div className="grid gap-4 p-4 rounded-2xl border border-slate-200 bg-slate-50">
-              <div className="mb-3">
-                <p className="text-sm font-semibold text-slate-900">Precios de combustible</p>
-                <p className="text-xs text-slate-500 mt-1">Agrega los precios al registrar la estación</p>
+            <form onSubmit={handleSubmit} style={{ marginTop: '24px' }}>
+              <div className="form-field">
+                <label>Nombre de estación</label>
+                <input
+                  className="input"
+                  value={form.name}
+                  onChange={(event) => setForm({ ...form, name: event.target.value })}
+                  required
+                />
               </div>
-              {['CORRIENTE', 'EXTRA', 'DIESEL'].map((fuelType) => (
-                <div key={fuelType}>
-                  <label className="block text-sm font-medium text-slate-900 mb-2">
-                    {fuelType}
-                  </label>
+              <div className="form-field">
+                <label>Marca</label>
+                <input
+                  className="input"
+                  value={form.brand}
+                  onChange={(event) => setForm({ ...form, brand: event.target.value })}
+                />
+              </div>
+              <div className="form-field">
+                <label>Dirección</label>
+                <input
+                  className="input"
+                  value={form.address}
+                  onChange={(event) => setForm({ ...form, address: event.target.value })}
+                />
+              </div>
+              <div className="grid-2" style={{ gap: '18px' }}>
+                <div className="form-field">
+                  <label>Latitud</label>
                   <input
                     type="number"
-                    step="0.01"
-                    value={form.prices[fuelType]}
-                    onChange={(e) => handlePriceChange(fuelType, e.target.value)}
-                    placeholder="Ej: 11500"
-                    className="input-modern"
+                    className="input"
+                    value={form.latitude}
+                    onChange={(event) => setForm({ ...form, latitude: event.target.value })}
+                    required
                   />
                 </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-900 mb-2">
-                  Latitud (desde el mapa)
-                </label>
-                <input
-                  type="number"
-                  name="latitude"
-                  step="0.000001"
-                  value={form.latitude}
-                  readOnly
-                  className="input-modern read-only"
-                />
+                <div className="form-field">
+                  <label>Longitud</label>
+                  <input
+                    type="number"
+                    className="input"
+                    value={form.longitude}
+                    onChange={(event) => setForm({ ...form, longitude: event.target.value })}
+                    required
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-900 mb-2">
-                  Longitud (desde el mapa)
-                </label>
-                <input
-                  type="number"
-                  name="longitude"
-                  step="0.000001"
-                  value={form.longitude}
-                  readOnly
-                  className="input-modern read-only"
-                />
+              <div className="section-header" style={{ marginTop: '18px' }}>
+                <h3>Precios de combustible</h3>
               </div>
-            </div>
+              <div className="grid-3" style={{ gap: '16px' }}>
+                {defaultPrices.map((item) => (
+                  <div key={item.fuelType} className="form-field">
+                    <label>{item.label}</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="input"
+                      value={prices[item.fuelType]}
+                      onChange={(event) => setPrices({ ...prices, [item.fuelType]: event.target.value })}
+                      placeholder="Precio COP"
+                    />
+                  </div>
+                ))}
+              </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-2">
-                📍 Selecciona la Ubicación en el Mapa *
-              </label>
-              <GoogleMapPicker
-                onLocationSelect={handleLocationSelect}
-                initialLat={parseFloat(form.latitude)}
-                initialLng={parseFloat(form.longitude)}
+              <button type="submit" className="button button-primary" disabled={loading}>{loading ? 'Guardando...' : 'Registrar estación'}</button>
+            </form>
+          </div>
+
+          <div className="card" style={{ padding: '24px', minHeight: '560px' }}>
+            <div className="section-header">
+              <h3>Mapa de ubicación</h3>
+            </div>
+            <p style={{ color: '#94a3b8', marginBottom: '16px' }}>Haz clic en el mapa para ajustar latitud y longitud.</p>
+            <div style={{ height: '460px', borderRadius: '18px', overflow: 'hidden' }}>
+              <MapView
+                stations={previewStation}
+                activeStation={previewStation[0]}
+                userLocation={userLocation}
+                onMapClick={handleMapClick}
               />
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-900 mb-2">
-                Dirección *
-              </label>
-              <input
-                type="text"
-                name="address"
-                value={form.address}
-                onChange={handleChange}
-                placeholder="Calle 50 #10-50, Bogotá"
-                className="input-modern"
-                required
-              />
-              {errors.address && <p className="text-red-500 text-xs mt-1">{errors.address}</p>}
-            </div>
-
-            <div className="badge-info">
-              ✅ <strong>Ubicación seleccionada:</strong> {form.latitude.toFixed(4)}, {form.longitude.toFixed(4)}
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn-primary w-full"
-            >
-              {loading ? 'Creando...' : 'Crear Estación'}
-            </button>
-          </form>
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

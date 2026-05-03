@@ -1,18 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
-export const useGeolocation = () => {
+export function useGeolocation() {
   const [location, setLocation] = useState(null);
-  const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (!navigator.geolocation) {
-      setError('Geolocation no está soportada en tu navegador');
+      setError('Geolocalización no disponible');
       setLoading(false);
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
+    const watcher = navigator.geolocation.getCurrentPosition(
       (position) => {
         setLocation({
           latitude: position.coords.latitude,
@@ -20,14 +20,23 @@ export const useGeolocation = () => {
         });
         setLoading(false);
       },
-      (error) => {
-        setError(error.message);
-        // Ubicación por defecto: Bogotá, Colombia
-        setLocation({ latitude: 4.711, longitude: -74.0721 });
+      (err) => {
+        setError(err.message);
         setLoading(false);
-      }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 12000,
+        maximumAge: 60000,
+      },
     );
+
+    return () => {
+      if (watcher && watcher.clearWatch) {
+        watcher.clearWatch();
+      }
+    };
   }, []);
 
-  return { location, error, loading };
-};
+  return { location, loading, error };
+}

@@ -1,70 +1,140 @@
-import { useAuth } from '../context/AuthContext';
-import { Link, useNavigate } from 'react-router-dom';
+﻿import { useEffect, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext.jsx';
+import { usersAPI } from '../api/auth.js';
+
+const navItems = [
+  { label: 'Mapa', path: '/map' },
+  { label: 'Rutas', path: '/routes' },
+  { label: 'Comparar', path: '/compare' },
+  { label: 'Favoritos', path: '/favorites' },
+];
 
 export default function Navbar() {
   const { user, logout } = useAuth();
-  const navigate = useNavigate();
+  const [alerts, setAlerts] = useState([]);
+  const [showAlerts, setShowAlerts] = useState(false);
+  const location = useLocation();
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
+  const loadAlerts = async () => {
+    if (!user) {
+      setAlerts([]);
+      return;
+    }
+
+    try {
+      const { data } = await usersAPI.getAlerts();
+      setAlerts(data.map((alert) => ({ ...alert, isRead: alert.isRead ?? alert.read })));
+    } catch (err) {
+      setAlerts([]);
+    }
+  };
+
+  useEffect(() => {
+    loadAlerts();
+  }, [user]);
+
+  const unreadCount = alerts.filter((alert) => !alert.isRead).length;
+
+  const handleRead = async (alertId) => {
+    setAlerts((current) => current.map((alert) => (alert.id === alertId ? { ...alert, isRead: true, read: true } : alert)));
+    try {
+      await usersAPI.markAlertAsRead(alertId);
+      await loadAlerts();
+    } catch (err) {
+      console.error(err);
+      await loadAlerts();
+    }
   };
 
   return (
-    <nav className="navbar p-4 shadow-2xl border-b-4" style={{borderBottomColor: 'var(--accent)'}}>
-      <div className="max-w-7xl mx-auto flex justify-between items-center">
-        <Link to="/map" className="text-2xl font-bold hover:scale-105 transition-transform duration-200 flex items-center gap-2 text-white">
-          <span className="text-3xl">⛽</span> Diesel Maps
+    <header className="navbar">
+      <div className="navbar-inner">
+        <Link to="/" className="nav-brand" style={{ textDecoration: 'none' }}>
+          Diesel<span>Maps</span>
         </Link>
 
-        <div className="flex items-center gap-4">
+        <nav className="nav-links">
+          <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`}>
+            Inicio
+          </Link>
+          {navItems.map((item) => (
+            <Link
+              key={item.path}
+              to={item.path}
+              className={`nav-link ${location.pathname === item.path ? 'active' : ''}`}
+            >
+              {item.label}
+            </Link>
+          ))}
+          {(user?.role === 'OPERATOR' || user?.role === 'ADMIN') && (
+            <Link to="/create-station" className="nav-link nav-cta">
+              Registrar estación
+            </Link>
+          )}
+        </nav>
+
+        <div className="nav-links">
           {user ? (
             <>
-              <span className="text-sm glass px-3 py-1 rounded-full text-white font-medium">
-                {user.username}
-                <span className="text-xs ml-2 px-2 py-0.5 rounded font-semibold" style={{backgroundColor: 'var(--accent)', color: 'var(--text)'}}>
-                  {user.role}
-                </span>
-              </span>
-              <Link
-                to="/routes"
-                className="btn-accent transform hover:scale-105 transition-all duration-200"
-              >
-                🧭 Rutas
-              </Link>
-              {user.role === 'OPERATOR' || user.role === 'ADMIN' ? (
-                <Link
-                  to="/create-station"
-                  className="btn-secondary transform hover:scale-105 transition-all duration-200"
-                >
-                  ➕ Estación
-                </Link>
-              ) : null}
-              <button
-                onClick={handleLogout}
-                className="btn-accent transform hover:scale-105 transition-all duration-200"
-              >
-                🚪 Logout
+              <button type="button" className="nav-link" onClick={() => setShowAlerts((value) => !value)}>
+                Alertas {unreadCount > 0 ? `(${unreadCount})` : ''}
+              </button>
+              <span className="tag">{user.username} • {user.role}</span>
+              <button type="button" className="nav-link nav-cta" onClick={logout}>
+                Salir
               </button>
             </>
           ) : (
             <>
-              <Link
-                to="/login"
-                className="glass hover:bg-white/20 px-4 py-2 rounded-lg text-sm transition-all duration-200 text-white font-medium"
-              >
-                🔐 Login
+              <Link to="/login" className="nav-link">
+                Ingresar
               </Link>
-              <Link
-                to="/register"
-                className="bg-green-500 hover:bg-green-600 px-4 py-2 rounded text-sm font-medium transition"
-              >
-                Registrarse
+              <Link to="/register" className="nav-link nav-cta">
+                Crear cuenta
               </Link>
             </>
           )}
         </div>
       </div>
-    </nav>
+
+      {showAlerts && user && (
+        <div className="site-frame" style={{ marginTop: '-10px' }}>
+          <div className="panel" style={{ padding: '18px', marginTop: '10px' }}>
+            <div className="section-header">
+              <h3>Notificaciones</h3>
+            </div>
+            {alerts.length === 0 ? (
+              <p className="text-muted">No tienes alertas nuevas.</p>
+            ) : (
+              <div className="grid-2" style={{ gap: '14px' }}>
+                {alerts.map((alert) => (
+                  <div key={alert.id} className="card" style={{ padding: '18px' }}>
+                    <p style={{ margin: 0 }}>{alert.message}</p>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginTop: '16px',
+                      }}
+                    >
+                      <span className={`status-pill ${alert.isRead ? 'status-closed' : 'status-active'}`}>
+                        {alert.isRead ? 'Leída' : 'Nueva'}
+                      </span>
+                      {!alert.isRead && (
+                        <button type="button" className="button-secondary" onClick={() => handleRead(alert.id)}>
+                          Marcar como leída
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </header>
   );
 }

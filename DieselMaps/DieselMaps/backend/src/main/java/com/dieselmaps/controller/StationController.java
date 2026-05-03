@@ -49,4 +49,10 @@ public class StationController {
     public ResponseEntity<StationDTO> getById(@PathVariable Long id) {
         return ResponseEntity.ok(stationService.findById(id));
     }
+
+    // Todos los autenticados: ver historial de precios de una estación
+    @GetMapping("/{id}/history")
+    public ResponseEntity<List<PriceHistoryDTO>> getHistory(@PathVariable Long id) {
+        return ResponseEntity.ok(stationService.getPriceHistory(id));
+    }
 }
